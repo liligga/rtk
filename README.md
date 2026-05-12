@@ -194,6 +194,7 @@ rtk prettier --check .          # Files needing formatting
 rtk cargo build                 # Cargo build (-80%)
 rtk cargo clippy                # Cargo clippy (-80%)
 rtk ruff check                  # Python linting (JSON, -80%)
+rtk py-compile file.py          # Python syntax check errors
 rtk golangci-lint run           # Go linting (JSON, -85%)
 rtk rubocop                     # Ruby linting (JSON, -60%+)
 ```
