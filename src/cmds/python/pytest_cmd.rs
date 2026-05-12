@@ -22,13 +22,9 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     };
 
     let has_tb_flag = args.iter().any(|a| a.starts_with("--tb"));
-    let has_quiet_flag = args.iter().any(|a| a == "-q" || a == "--quiet");
 
     if !has_tb_flag {
         cmd.arg("--tb=short");
-    }
-    if !has_quiet_flag {
-        cmd.arg("-q");
     }
 
     for arg in args {
@@ -36,7 +32,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     }
 
     if verbose > 0 {
-        eprintln!("Running: pytest --tb=short -q {}", args.join(" "));
+        eprintln!("Running: pytest --tb=short {}", args.join(" "));
     }
 
     runner::run_filtered(
@@ -54,6 +50,7 @@ pub(crate) fn filter_pytest_output(output: &str) -> String {
     let mut failures: Vec<String> = Vec::new();
     let mut current_failure: Vec<String> = Vec::new();
     let mut summary_line = String::new();
+    let mut collected_count: Option<usize> = None;
 
     for line in output.lines() {
         let trimmed = line.trim();
@@ -98,6 +95,7 @@ pub(crate) fn filter_pytest_output(output: &str) -> String {
         match state {
             ParseState::Header => {
                 if trimmed.starts_with("collected") {
+                    collected_count = parse_collected_count(trimmed);
                     state = ParseState::TestProgress;
                 }
             }
@@ -138,15 +136,28 @@ pub(crate) fn filter_pytest_output(output: &str) -> String {
     }
 
     // Build compact output
-    build_pytest_summary(&summary_line, &test_files, &failures)
+    build_pytest_summary(&summary_line, &test_files, &failures, collected_count)
 }
 
-fn build_pytest_summary(summary: &str, _test_files: &[String], failures: &[String]) -> String {
+fn build_pytest_summary(
+    summary: &str,
+    _test_files: &[String],
+    failures: &[String],
+    collected_count: Option<usize>,
+) -> String {
     // Parse summary line
     let (passed, failed, skipped) = parse_summary_line(summary);
 
     if failed == 0 && passed > 0 {
         return format!("Pytest: {} passed", passed);
+    }
+
+    if passed == 0 && failed == 0 && skipped == 0 {
+        if let Some(collected) = collected_count {
+            if collected > 0 && failures.is_empty() {
+                return format!("Pytest: {} passed", collected);
+            }
+        }
     }
 
     if passed == 0 && failed == 0 && skipped == 0 {
@@ -250,6 +261,14 @@ fn parse_summary_line(summary: &str) -> (usize, usize, usize) {
     }
 
     (passed, failed, skipped)
+}
+
+fn parse_collected_count(line: &str) -> Option<usize> {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    if words.first().copied() == Some("collected") {
+        return words.get(1)?.parse().ok();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -378,6 +397,18 @@ FAILED tests/test_foo.py::test_something - AssertionError
             "Should show actual test counts. Got: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_filter_pytest_quiet_mode_all_pass_without_summary() {
+        let output = r#"=== test session starts ===
+platform linux -- Python 3.12.11, pytest-8.1.0
+collected 8 items
+
+........                                                                 [100%]"#;
+
+        let result = filter_pytest_output(output);
+        assert_eq!(result, "Pytest: 8 passed");
     }
 
     #[test]

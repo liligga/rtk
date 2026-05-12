@@ -789,6 +789,18 @@ fn rewrite_segment_inner(
     // Find the matching rule (rtk_cmd values are unique across all rules)
     let rule = RULES.iter().find(|r| r.rtk_cmd == rtk_equivalent)?;
 
+    if rule.rtk_cmd == "rtk pytest" {
+        if let Some(rewritten) = rewrite_uv_run_pytest(cmd_part, "", redirect_suffix) {
+            return Some(rewritten);
+        }
+    }
+
+    if rule.rtk_cmd == "rtk py-compile" {
+        if let Some(rewritten) = rewrite_uv_run_py_compile(cmd_part, "", redirect_suffix) {
+            return Some(rewritten);
+        }
+    }
+
     if let Some(parts) = parse_golangci_run_parts(cmd_part) {
         let rewritten = if parts.global_segment.is_empty() {
             format!("rtk golangci-lint {}", parts.run_segment)
@@ -820,6 +832,65 @@ fn rewrite_segment_inner(
                 format!("{}{}", rule.rtk_cmd, redirect_suffix)
             } else {
                 format!("{} {}{}", rule.rtk_cmd, rest, redirect_suffix)
+            };
+            return Some(rewritten);
+        }
+    }
+
+    None
+}
+
+fn rewrite_uv_run_pytest(
+    cmd_clean: &str,
+    env_prefix: &str,
+    redirect_suffix: &str,
+) -> Option<String> {
+    for &(prefix, uv_prefix) in &[
+        ("uv run -q python3 -m pytest", "uv run -q"),
+        ("uv run -q python -m pytest", "uv run -q"),
+        ("uv run python3 -m pytest", "uv run"),
+        ("uv run python -m pytest", "uv run"),
+        ("uv run -q pytest", "uv run -q"),
+        ("uv run pytest", "uv run"),
+    ] {
+        if let Some(rest) = strip_word_prefix(cmd_clean, prefix) {
+            let rewritten = if rest.is_empty() {
+                format!("{}{} rtk pytest{}", env_prefix, uv_prefix, redirect_suffix)
+            } else {
+                format!(
+                    "{}{} rtk pytest {}{}",
+                    env_prefix, uv_prefix, rest, redirect_suffix
+                )
+            };
+            return Some(rewritten);
+        }
+    }
+
+    None
+}
+
+fn rewrite_uv_run_py_compile(
+    cmd_clean: &str,
+    env_prefix: &str,
+    redirect_suffix: &str,
+) -> Option<String> {
+    for &(prefix, uv_prefix) in &[
+        ("uv run -q python3 -m py_compile", "uv run -q"),
+        ("uv run -q python -m py_compile", "uv run -q"),
+        ("uv run python3 -m py_compile", "uv run"),
+        ("uv run python -m py_compile", "uv run"),
+    ] {
+        if let Some(rest) = strip_word_prefix(cmd_clean, prefix) {
+            let rewritten = if rest.is_empty() {
+                format!(
+                    "{}{} rtk py-compile{}",
+                    env_prefix, uv_prefix, redirect_suffix
+                )
+            } else {
+                format!(
+                    "{}{} rtk py-compile {}{}",
+                    env_prefix, uv_prefix, rest, redirect_suffix
+                )
             };
             return Some(rewritten);
         }
@@ -2249,6 +2320,39 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_uv_run_pytest() {
+        assert!(matches!(
+            classify_command("uv run pytest tests/"),
+            Classification::Supported {
+                rtk_equivalent: "rtk pytest",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_python_m_py_compile() {
+        assert!(matches!(
+            classify_command("python -m py_compile src/app.py"),
+            Classification::Supported {
+                rtk_equivalent: "rtk py-compile",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_uv_run_py_compile() {
+        assert!(matches!(
+            classify_command("uv run python -m py_compile src/app.py"),
+            Classification::Supported {
+                rtk_equivalent: "rtk py-compile",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn test_classify_pip_list() {
         assert!(matches!(
             classify_command("pip list"),
@@ -2299,6 +2403,54 @@ mod tests {
         assert_eq!(
             rewrite_command_no_prefixes("python -m pytest -x tests/", &[]),
             Some("rtk pytest -x tests/".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uv_run_pytest() {
+        assert_eq!(
+            rewrite_command_no_prefixes("uv run pytest src/tests/unit -q", &[]),
+            Some("uv run rtk pytest src/tests/unit -q".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uv_run_quiet_pytest() {
+        assert_eq!(
+            rewrite_command_no_prefixes("uv run -q pytest src/tests/unit", &[]),
+            Some("uv run -q rtk pytest src/tests/unit".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uv_run_python_m_pytest() {
+        assert_eq!(
+            rewrite_command_no_prefixes("uv run -q python3 -m pytest src/tests/unit", &[]),
+            Some("uv run -q rtk pytest src/tests/unit".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_python_m_py_compile() {
+        assert_eq!(
+            rewrite_command_no_prefixes("python -m py_compile src/app.py", &[]),
+            Some("rtk py-compile src/app.py".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uv_run_python_m_py_compile() {
+        assert_eq!(
+            rewrite_command_no_prefixes("uv run python -m py_compile src/app.py", &[]),
+            Some("uv run rtk py-compile src/app.py".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uv_run_quiet_python_m_py_compile() {
+        assert_eq!(
+            rewrite_command_no_prefixes("uv run -q python3 -m py_compile src/app.py", &[]),
+            Some("uv run -q rtk py-compile src/app.py".into())
         );
     }
 
